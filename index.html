@@ -34,6 +34,7 @@ button:hover{opacity:.82}
 .rook{width:50%;height:50%;background:#fff;box-shadow:0 1px 4px #333}
 .rook.black{background:#000}
 .cell.selected{outline:5px solid #111;outline-offset:-5px}
+.replacement-panel{height:54px;margin:8px auto 0;display:flex;align-items:center;justify-content:center}.replacement-title,.replacement-help{display:none}.replacement-pieces{display:flex;justify-content:center;align-items:center;gap:6px;min-height:0}.replacement-piece{width:40px;height:40px;background:transparent;border:0;border-radius:0;display:flex;align-items:center;justify-content:center}.replacement-piece .pawn{width:27px;height:27px}.replacement-piece .rook{width:26px;height:26px}.replacement-piece.active{outline:0}.cell.replacement-target{box-shadow:inset 0 0 0 5px var(--green)}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px}
 .modalbox{background:#fff;padding:30px;text-align:center;min-width:min(430px,90vw);border-radius:8px}
 .modalbox h2{margin-top:0}
@@ -60,6 +61,11 @@ button:hover{opacity:.82}
       <button id="back">Menu</button>
     </div>
     <div id="board"></div>
+    <div id="replacementPanel" class="replacement-panel hidden">
+      <div id="replacementTitle" class="replacement-title"></div>
+      <div id="replacementPieces" class="replacement-pieces"></div>
+      <div class="replacement-help">Clique sur une case de départ libre pour replacer chaque pièce.</div>
+    </div>
   </section>
 </div>
 
@@ -208,15 +214,21 @@ function availablePieces(){
   for(let z=0;z<4;z++)for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(mine(x,y,z))a.push([x,y,z]);
   return a;
 }
-function replaceRemoved(){
-  while(piecesToReplace.length){
-    const coords=whiteTurn
-      ? [[3,0,3],[3,1,3],[3,2,3],[3,3,3]]
-      : [[0,0,0],[0,1,0],[0,2,0],[0,3,0]];
-    const free=coords.filter(([x,y,z])=>isFree(x,y,z));
-    if(!free.length) break;
-    const [x,y,z]=randomItem(free);
-    setv(x,y,z,piecesToReplace.pop());
+function replacementCoords(){
+  return whiteTurn ? [[3,0,3],[3,1,3],[3,2,3],[3,3,3]] : [[0,0,0],[0,1,0],[0,2,0],[0,3,0]];
+}
+function isReplacementPhase(){ return piecesToReplace.length > 0; }
+function renderReplacementPanel(){
+  const panel=$("replacementPanel"), pieces=$("replacementPieces"), title=$("replacementTitle");
+  pieces.innerHTML="";
+  if(!isReplacementPhase()){ panel.classList.remove("hidden"); panel.style.visibility="hidden"; return; }
+  panel.classList.remove("hidden"); panel.style.visibility="visible";
+  title.textContent="";
+  for(const p of piecesToReplace){
+    const el=document.createElement("div"); el.className="replacement-piece";
+    const shape=document.createElement("div"); shape.className=(p===WHITE_PAWN||p===BLACK_PAWN)?"pawn":"rook";
+    if(p===BLACK_PAWN||p===BLACK_ROOK) shape.classList.add("black");
+    el.appendChild(shape); pieces.appendChild(el);
   }
 }
 function performMove(from,to){
@@ -226,7 +238,6 @@ function performMove(from,to){
   selected=null;clearMarks();checkVictory();
   if(!victory) markAttacks(whiteTurn?"white":"black");
   whiteTurn=!whiteTurn;
-  replaceRemoved();
   render();
   maybeAI();
 }
@@ -269,9 +280,13 @@ function aiMove(){
   }
   if(choice) performMove(choice[0],choice[1]);
 }
-function maybeAI(){setTimeout(()=>{if(victory===null&&((whiteAI&&whiteTurn)||(blackAI&&!whiteTurn)))aiMove();},350);}
+function maybeAI(){
+  if(isReplacementPhase()) return;
+  setTimeout(()=>{if(victory===null&&!isReplacementPhase()&&((whiteAI&&whiteTurn)||(blackAI&&!whiteTurn)))aiMove();},350);
+}
 function render(){
   $("status").textContent=victory? (victory===100?"Les Blancs ont gagné !":"Les Noirs ont gagné !")+`  • ${moveCount} coups` : `Tour des ${whiteTurn?"blancs":"noirs"} • Coup ${moveCount}`;
+  renderReplacementPanel();
   const root=$("board");root.innerHTML="";
   for(let z=0;z<4;z++){
     const sub=document.createElement("div");sub.className="subboard";
@@ -284,6 +299,7 @@ function render(){
       if(v===ATTACK_WHITE)c.classList.add("mark-attack-white");
       if(v===ATTACK_BLACK)c.classList.add("mark-attack-black");
       if(selected&&selected[0]===x&&selected[1]===y&&selected[2]===z)c.classList.add("selected");
+      if(isReplacementPhase() && replacementCoords().some(p=>p[0]===x&&p[1]===y&&p[2]===z) && isFree(x,y,z)) c.classList.add("replacement-target");
       if(v===1||v===2){const p=document.createElement("div");p.className="pawn"+(v===2?" black":"");c.appendChild(p);}
       if(v===3||v===4){const r=document.createElement("div");r.className="rook"+(v===4?" black":"");c.appendChild(r);}
       c.addEventListener("click",()=>clickCell(x,y,z));sub.appendChild(c);
@@ -297,7 +313,16 @@ function render(){
   }
 }
 function clickCell(x,y,z){
-  if(victory!==null||((whiteAI&&whiteTurn)||(blackAI&&!whiteTurn)))return;
+  if(victory!==null)return;
+  if(isReplacementPhase()){
+    const allowed=replacementCoords().some(p=>p[0]===x&&p[1]===y&&p[2]===z);
+    if(!allowed || !isFree(x,y,z)) return;
+    setv(x,y,z,piecesToReplace.shift());
+    selected=null; clearMarks(); render();
+    if(!isReplacementPhase()) maybeAI();
+    return;
+  }
+  if((whiteAI&&whiteTurn)||(blackAI&&!whiteTurn))return;
   const v=get(x,y,z);
   if(selected){
     if(pieceMoves(...selected).some(p=>p[0]===x&&p[1]===y&&p[2]===z)){performMove(selected,[x,y,z]);return;}
